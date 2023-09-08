@@ -2,13 +2,18 @@ package io.github.ryuryu_ymj.notebook
 
 import android.util.Log
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
@@ -17,10 +22,14 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.util.fastAny
 import io.github.ryuryu_ymj.notebook.gestures.flingTransformable
 import io.github.ryuryu_ymj.notebook.gestures.rememberCentroidTransformState
+import io.github.ryuryu_ymj.notebook.smoother.DampedSmoother
 
 @Composable
 fun Viewer(modifier: Modifier = Modifier) {
@@ -29,6 +38,10 @@ fun Viewer(modifier: Modifier = Modifier) {
   var viewportOffset by remember { mutableStateOf(Offset.Zero) }
   var viewportScale by remember { mutableFloatStateOf(1f) }
   var layoutSize by remember { mutableStateOf(IntSize.Zero) }
+
+  val strokes = remember { mutableStateListOf<Stroke>() }
+  val smoother = remember { DampedSmoother() }
+  val pen = remember { Pen() }
 
   fun contentScale() = layoutSize.width / contentFrame.width
 
@@ -60,19 +73,68 @@ fun Viewer(modifier: Modifier = Modifier) {
 
   SideEffect { Log.d(TAG, "Viewer is (re)composed.") }
 
+  Box() {
+    //
+  }
   Canvas(
       modifier
           .onGloballyPositioned { layoutSize = it.size }
           .clipToBounds()
-          .flingTransformable(state = state)
+          .flingTransformable(
+              state = state,
+              canTransform = { it.type == PointerType.Touch || it.type == PointerType.Mouse })
           .graphicsLayer {
             translationX = -viewportOffset.x * viewportScale * contentScale()
             translationY = -viewportOffset.y * viewportScale * contentScale()
             scaleX = viewportScale * contentScale()
             scaleY = viewportScale * contentScale()
             transformOrigin = TransformOrigin(0f, 0f)
+          }
+          .pointerInput(Unit) {
+            awaitEachGesture {
+              // touch down
+              val down = awaitFirstDown()
+              if (down.type == PointerType.Stylus) {
+                strokes.add(Stroke())
+                smoother.beginStroke(
+                    strokes.last(),
+                    down.position.x,
+                    down.position.y,
+                    down.pressure,
+                    down.uptimeMillis,
+                    pen)
+
+                do {
+                  // touch move
+                  val event = awaitPointerEvent()
+                  @OptIn(ExperimentalComposeUiApi::class)
+                  event.changes.firstOrNull()?.let { change ->
+                    change.consume()
+                    change.historical.forEach {
+                      smoother.extendStroke(
+                          strokes.last(),
+                          it.position.x,
+                          it.position.y,
+                          change.pressure,
+                          it.uptimeMillis,
+                          pen)
+                    }
+                    smoother.extendStroke(
+                        strokes.last(),
+                        change.position.x,
+                        change.position.y,
+                        change.pressure,
+                        change.uptimeMillis,
+                        pen)
+                  }
+                } while (event.changes.fastAny { it.pressed })
+
+                // touch up
+                smoother.endStroke(strokes.last(), pen)
+              }
+            }
           }) {
-        Log.d(TAG, "Viewer is drawn. size: $size")
+        //        Log.d(TAG, "Viewer is drawn. size: $size")
         drawRect(Color.LightGray, contentFrame.topLeft, contentFrame.size)
         for (x in 0 until contentFrame.width.toInt() step 10) {
           drawLine(
@@ -82,5 +144,7 @@ fun Viewer(modifier: Modifier = Modifier) {
           drawLine(
               Color.Black, start = Offset(0f, y.toFloat()), end = Offset(size.width, y.toFloat()))
         }
+
+        strokes.forEach { with(it) { drawStroke() } }
       }
 }
