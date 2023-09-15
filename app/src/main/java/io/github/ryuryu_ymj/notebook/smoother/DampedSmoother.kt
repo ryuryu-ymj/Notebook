@@ -1,7 +1,7 @@
 package io.github.ryuryu_ymj.notebook.smoother
 
-import io.github.ryuryu_ymj.notebook.Pen
-import io.github.ryuryu_ymj.notebook.Stroke
+import android.util.Log
+import io.github.ryuryu_ymj.notebook.TAG
 import kotlin.math.hypot
 import kotlin.math.min
 
@@ -16,16 +16,16 @@ class DampedSmoother : TouchSmoother {
   private var nibDY = 0f
   private var nibPressure = 0f
   private var time = 0L
-  private val error = 0.1f
+  private val error = 0.01f
 
-  override fun beginStroke(
-    stroke: Stroke,
-    x: Float,
-    y: Float,
-    pressure: Float,
-    time: Long,
-    pen: Pen
+  override fun beginTouch(
+      x: Float,
+      y: Float,
+      pressure: Float,
+      time: Long,
+      onPointsAdd: OnPointsAdd
   ) {
+    Log.d(TAG, "$x, $y, $time")
     touchX = x
     touchY = y
     nibPressure = pressure
@@ -34,36 +34,38 @@ class DampedSmoother : TouchSmoother {
     nibDX = 0f
     nibDY = 0f
     this.time = time
-    pen.begin(stroke, x, y, nibPressure)
+    onPointsAdd(x, y, nibPressure)
   }
 
-  override fun extendStroke(
-      stroke: Stroke,
+  override fun moveTouch(
       x: Float,
       y: Float,
       pressure: Float,
       time: Long,
-      pen: Pen
+      onPointsAdd: OnPointsAdd
   ) {
+    Log.d(TAG, "$x, $y, $time")
     val w1 = 0.5f
     val duration = time - this.time
-    val newTouchDX = (x - touchX) / duration
-    val newTouchDY = (y - touchY) / duration
-    touchDX = touchDX * (1 - w1) + newTouchDX * w1
-    touchDY = touchDY * (1 - w1) + newTouchDY * w1
+    if (duration > 0) {
+      val newTouchDX = (x - touchX) / duration
+      val newTouchDY = (y - touchY) / duration
+      touchDX = touchDX * (1 - w1) + newTouchDX * w1
+      touchDY = touchDY * (1 - w1) + newTouchDY * w1
 
-    touchX = x
-    touchY = y
-    moveNibPhysically(duration.toInt())
-    this.time = time
+      touchX = x
+      touchY = y
+      moveNibPhysically(duration.toInt())
+      this.time = time
 
-    val w2 = 0.2f
-    nibPressure = nibPressure * (1 - w2) + pressure * w2
+      val w2 = 0.2f
+      nibPressure = nibPressure * (1 - w2) + pressure * w2
 
-    pen.move(stroke, nibX, nibY, nibPressure)
+      onPointsAdd(nibX, nibY, nibPressure)
+    }
   }
 
-  override fun endStroke(stroke: Stroke, pen: Pen) {
+  override fun endTouch(onPointsAdd: OnPointsAdd) {
     var move = hypot(nibX - touchX, nibY - touchY)
     val dt = 4
     while (move > error) {
@@ -72,10 +74,8 @@ class DampedSmoother : TouchSmoother {
       moveNibPhysically(dt)
       move -= hypot(nibDX * dt, nibDY * dt)
 
-      pen.move(stroke, nibX, nibY, nibPressure)
+      onPointsAdd(nibX, nibY, nibPressure)
     }
-
-    pen.end(stroke)
   }
 
   private fun moveNibPhysically(duration: Int) {
@@ -91,6 +91,7 @@ class DampedSmoother : TouchSmoother {
       nibDY -= ((nibY - touchY) * omega * omega + nibDY * omega * gamma * 2) * dt
       nibX += nibDX * dt
       nibY += nibDY * dt
+      Log.d(TAG, "$nibX, $nibY, $nibDX, $nibDY, $touchX, $touchY")
     }
   }
 }
